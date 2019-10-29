@@ -62,17 +62,13 @@ func PopulatePageChildren(page *Page) {
 	links := GetLinks(doc)
 
 	var prevChildPage *Page
-	for _, link := range links {
+	for _, linkUrl := range links {
 
-		linkUrl, err := url.Parse(link)
-		if err != nil {
-			continue
-		}
 		if (linkUrl.Scheme != "http" && linkUrl.Scheme != "https" && linkUrl.Scheme != "") ||
 			(linkUrl.Host != page.URL.Host && linkUrl.Host != "") {
 			continue
 		}
-		absoluteLinkUrl := page.URL.ResolveReference(linkUrl)
+		absoluteLinkUrl := page.URL.ResolveReference(&linkUrl)
 
 		rootPage := page
 		for rootPage.Parent != nil {
@@ -97,9 +93,9 @@ func PopulatePageChildren(page *Page) {
 	}
 }
 
-func GetLinks(node *html.Node) []string {
+func GetLinks(node *html.Node) []url.URL {
 
-	links := make(map[string]bool)
+	links := make(map[url.URL]bool)
 
 	var f func(n *html.Node)
 	f = func(n *html.Node) {
@@ -114,7 +110,7 @@ func GetLinks(node *html.Node) []string {
 					continue
 				}
 				url.Fragment = ""
-				links[url.String()] = true
+				links[*url] = true
 			}
 		}
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -123,7 +119,7 @@ func GetLinks(node *html.Node) []string {
 	}
 	f(node)
 
-	linksarray := make([]string, len(links))
+	linksarray := make([]url.URL, len(links))
 	i := 0
 	for link := range links {
 		linksarray[i] = link
