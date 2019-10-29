@@ -9,6 +9,7 @@ import (
 	"golang.org/x/net/html"
 )
 
+// Page defines a node in the site-map tree structure
 type Page struct {
 	URL         *url.URL
 	Parent      *Page
@@ -16,41 +17,44 @@ type Page struct {
 	NextSibling *Page
 }
 
-const MaxRequests = 25
+// MaxPages limits the number of pages to construct
+const MaxPages = 25
 
-var RequestCount int = 0
+var pageCount int = 0
 
-func Crawl(startUrl string) {
-	url, err := url.Parse(startUrl)
+// Crawl print a textual site-map of a domain with the startURL as the root
+func Crawl(startURL string) {
+	url, err := url.Parse(startURL)
 
 	if err != nil {
 		// TODO: log error
 	}
 
 	page := &Page{URL: url}
-	PopulatePageChildren(page)
+	populateChildPages(page)
 
-	PrintPage(page, 0)
+	printPage(page, 0)
 }
 
-func PrintPage(page *Page, depth int) {
+func printPage(page *Page, depth int) {
 	if page == nil {
 		return
 	}
 	fmt.Printf("%s%s\n", strings.Repeat(" ", depth), page.URL.String())
-	PrintPage(page.FirstChild, depth+1)
-	PrintPage(page.NextSibling, depth)
+	printPage(page.FirstChild, depth+1)
+	printPage(page.NextSibling, depth)
 }
 
-func PopulatePageChildren(page *Page) {
-	if RequestCount > MaxRequests {
+func populateChildPages(page *Page) {
+	if pageCount >= MaxPages {
 		return
 	}
-	RequestCount++
+	pageCount++
+
 	resp, err := http.Get(page.URL.String())
 	defer resp.Body.Close()
 
-	if err != nil || !IsValidHtml(resp) {
+	if err != nil || !isValidHTML(resp) {
 		return
 	}
 
@@ -59,26 +63,26 @@ func PopulatePageChildren(page *Page) {
 		// ...
 	}
 
-	links := GetLinks(doc)
+	links := parseLinks(doc)
 
 	var prevChildPage *Page
-	for _, linkUrl := range links {
+	for _, linkURL := range links {
 
-		if (linkUrl.Scheme != "http" && linkUrl.Scheme != "https" && linkUrl.Scheme != "") ||
-			(linkUrl.Host != page.URL.Host && linkUrl.Host != "") {
+		if (linkURL.Scheme != "http" && linkURL.Scheme != "https" && linkURL.Scheme != "") ||
+			(linkURL.Host != page.URL.Host && linkURL.Host != "") {
 			continue
 		}
-		absoluteLinkUrl := page.URL.ResolveReference(&linkUrl)
+		absolutelinkURL := page.URL.ResolveReference(&linkURL)
 
 		rootPage := page
 		for rootPage.Parent != nil {
 			rootPage = rootPage.Parent
 		}
-		if UrlParentExists(absoluteLinkUrl, rootPage) {
+		if urlExists(absolutelinkURL, rootPage) {
 			continue
 		}
 
-		childPage := &Page{URL: absoluteLinkUrl, Parent: page}
+		childPage := &Page{URL: absolutelinkURL, Parent: page}
 		if prevChildPage != nil {
 			prevChildPage.NextSibling = childPage
 		}
@@ -89,11 +93,11 @@ func PopulatePageChildren(page *Page) {
 	}
 
 	for childPage := page.FirstChild; childPage != nil; childPage = page.NextSibling {
-		PopulatePageChildren(childPage)
+		populateChildPages(childPage)
 	}
 }
 
-func GetLinks(node *html.Node) []url.URL {
+func parseLinks(node *html.Node) []url.URL {
 
 	links := make(map[url.URL]bool)
 
@@ -128,30 +132,31 @@ func GetLinks(node *html.Node) []url.URL {
 	return linksarray
 }
 
-func UrlParentExists(url *url.URL, page *Page) bool {
+func urlExists(url *url.URL, page *Page) bool {
 	if page != nil {
 		if *page.URL == *url {
 			return true
 		}
-		return UrlParentExists(url, page.FirstChild) || UrlParentExists(url, page.NextSibling)
+		return urlExists(url, page.FirstChild) || urlExists(url, page.NextSibling)
 	}
 	return false
 }
 
-func IsValidHtml(resp *http.Response) bool {
+func isValidHTML(resp *http.Response) bool {
 	if resp.StatusCode != 200 {
 		return false
 	}
-	isContentHtml := false
-	for i := 0; i < len(resp.Header["Content-Type"]) && !isContentHtml; i++ {
+	isContentHTML := false
+	for i := 0; i < len(resp.Header["Content-Type"]) && !isContentHTML; i++ {
 		fmt.Println(resp)
 		if strings.HasPrefix(resp.Header["Content-Type"][i], "text/html") {
-			isContentHtml = true
+			isContentHTML = true
 		}
 	}
-	if !isContentHtml {
+	if !isContentHTML {
 		return false
 	}
+
 	return true
 }
 
