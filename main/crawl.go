@@ -19,14 +19,14 @@ type Page struct {
 }
 
 // Crawl constructs a site-map of a domain with the startURL as the root
-func Crawl(startURL string, maxDepth int) (*Page, error) {
-	url, err := url.Parse(startURL)
+func Crawl(URL string, maxDepth int) (*Page, error) {
+	parsedURL, err := url.Parse(URL)
 
 	if err != nil {
 		return nil, err
 	}
 
-	page := &Page{URL: url}
+	page := &Page{URL: parsedURL}
 	populateChildPages(page, maxDepth, 1, nil)
 
 	return page, nil
@@ -37,31 +37,31 @@ func Print(page *Page) {
 	print(page, 0)
 }
 
-func populateChildPages(page *Page, maxDepth, depth int, waitgroup *sync.WaitGroup) {
-	if waitgroup != nil {
-		defer waitgroup.Done()
+func populateChildPages(page *Page, maxDepth, depth int, waitGroup *sync.WaitGroup) {
+	if waitGroup != nil {
+		defer waitGroup.Done()
 	}
 
 	// Send HEAD request to avoid potentially large downloads of non-HTML resources
-	resp, err := http.Head(page.URL.String())
-	if err != nil || !isSuccessHTMLResponse(resp) {
+	response, err := http.Head(page.URL.String())
+	if err != nil || !isSuccessHTMLResponse(response) {
 		return
 	}
 
-	resp, err = http.Get(page.URL.String())
-	if err != nil || !isSuccessHTMLResponse(resp) {
+	response, err = http.Get(page.URL.String())
+	if err != nil || !isSuccessHTMLResponse(response) {
 		// Only search for links in successful HTML responses
 		return
 	}
 
-	doc, err := html.Parse(resp.Body)
+	doc, err := html.Parse(response.Body)
 	if err != nil || doc == nil {
 		// Not valid HTML response content
 		return
 	}
 
-	links := parseLinks(doc)
-	resp.Body.Close()
+	links := mineLinks(doc)
+	response.Body.Close()
 
 	var prevChildPage *Page
 	for _, linkURL := range links {
@@ -102,17 +102,17 @@ func populateChildPages(page *Page, maxDepth, depth int, waitgroup *sync.WaitGro
 	childWaitGroup.Wait()
 }
 
-func isSuccessHTMLResponse(resp *http.Response) bool {
-	if resp == nil {
+func isSuccessHTMLResponse(response *http.Response) bool {
+	if response == nil {
 		return false
 	}
 
-	if !(resp.StatusCode >= 200 && resp.StatusCode < 400) {
+	if !(response.StatusCode >= 200 && response.StatusCode < 400) {
 		return false
 	}
 
 	isContentHTML := false
-	for _, contentType := range resp.Header["Content-Type"] {
+	for _, contentType := range response.Header["Content-Type"] {
 		if strings.HasPrefix(contentType, "text/html") {
 			isContentHTML = true
 			break
@@ -125,11 +125,11 @@ func isSuccessHTMLResponse(resp *http.Response) bool {
 	return true
 }
 
-func parseLinks(node *html.Node) []url.URL {
+func mineLinks(node *html.Node) []url.URL {
 	links := make(map[url.URL]bool)
 
-	var f func(n *html.Node)
-	f = func(n *html.Node) {
+	var mineLinksInNode func(n *html.Node)
+	mineLinksInNode = func(n *html.Node) {
 		if n.Type == html.ElementNode && n.Data == "a" {
 			for i := 0; i < len(n.Attr); i++ {
 				attr := n.Attr[i]
@@ -137,24 +137,24 @@ func parseLinks(node *html.Node) []url.URL {
 					continue
 				}
 
-				url, err := url.Parse(attr.Val)
+				parsedURL, err := url.Parse(attr.Val)
 				if err != nil {
 					continue
 				}
 
 				// Ignore "#fragment" part of URL
-				url.Fragment = ""
+				parsedURL.Fragment = ""
 
-				links[*url] = true
+				links[*parsedURL] = true
 			}
 		}
 
 		// Traverse the tree depth-first
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			f(child)
+			mineLinksInNode(child)
 		}
 	}
-	f(node)
+	mineLinksInNode(node)
 
 	linksArray := make([]url.URL, len(links))
 	i := 0
