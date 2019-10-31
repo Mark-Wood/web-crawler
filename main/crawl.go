@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 
 	"golang.org/x/net/html"
 )
@@ -26,7 +27,7 @@ func Crawl(startURL string, maxDepth int) (*Page, error) {
 	}
 
 	page := &Page{URL: url}
-	populateChildPages(page, maxDepth, 1)
+	populateChildPages(page, maxDepth, 1, nil)
 
 	return page, nil
 }
@@ -36,7 +37,11 @@ func Print(page *Page) {
 	print(page, 0)
 }
 
-func populateChildPages(page *Page, maxDepth, depth int) {
+func populateChildPages(page *Page, maxDepth, depth int, waitgroup *sync.WaitGroup) {
+	if waitgroup != nil {
+		defer waitgroup.Done()
+	}
+
 	// Send HEAD request to avoid potentially large downloads of non-HTML resources
 	resp, err := http.Head(page.URL.String())
 	if err != nil || !isSuccessHTMLResponse(resp) {
@@ -89,9 +94,12 @@ func populateChildPages(page *Page, maxDepth, depth int) {
 		prevChildPage = childPage
 	}
 
+	var childWaitGroup sync.WaitGroup
 	for childPage := page.FirstChild; childPage != nil; childPage = childPage.NextSibling {
-		populateChildPages(childPage, maxDepth, depth+1)
+		childWaitGroup.Add(1)
+		go populateChildPages(childPage, maxDepth, depth+1, &childWaitGroup)
 	}
+	childWaitGroup.Wait()
 }
 
 func isSuccessHTMLResponse(resp *http.Response) bool {
@@ -171,15 +179,3 @@ func print(page *Page, depth int) {
 	print(page.FirstChild, depth+1)
 	print(page.NextSibling, depth)
 }
-
-//func
-/*
- * TODO:
- * - logging
- * - run javascript?
- * - scan for links in non-html responses
- * - handle forms
- * - parallelisation (channels?)
- * - error handling
- * - agent string?
- */
