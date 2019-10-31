@@ -64,7 +64,7 @@ func populateChildPages(page *Page, maxDepth, depth int, waitGroup *sync.WaitGro
 	response.Body.Close()
 
 	var prevChildPage *Page
-	for _, linkURL := range links {
+	for linkURL := range links {
 		if (linkURL.Scheme != "http" && linkURL.Scheme != "https" && linkURL.Scheme != "") ||
 			(linkURL.Host != page.URL.Host && linkURL.Host != "") {
 			continue
@@ -125,7 +125,7 @@ func isSuccessHTMLResponse(response *http.Response) bool {
 	return true
 }
 
-func mineLinks(node *html.Node) []url.URL {
+func mineLinks(node *html.Node) map[url.URL]bool {
 	links := make(map[url.URL]bool)
 
 	var mineLinksInNode func(n *html.Node)
@@ -156,13 +156,7 @@ func mineLinks(node *html.Node) []url.URL {
 	}
 	mineLinksInNode(node)
 
-	linksArray := make([]url.URL, len(links))
-	i := 0
-	for link := range links {
-		linksArray[i] = link
-		i++
-	}
-	return linksArray
+	return links
 }
 
 func urlExistsInTree(url *url.URL, page *Page) bool {
