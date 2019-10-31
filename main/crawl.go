@@ -17,72 +17,69 @@ type Page struct {
 	NextSibling *Page
 }
 
-// MaxPages limits the number of pages to construct
-const MaxPages = 25
-
-var pageCount int = 0
-
-// Crawl print a textual site-map of a domain with the startURL as the root
-func Crawl(startURL string) {
+// Crawl constructs a site-map of a domain with the startURL as the root
+func Crawl(startURL string, maxDepth int) (*Page, error) {
 	url, err := url.Parse(startURL)
 
 	if err != nil {
-		// TODO: log error
+		return nil, err
 	}
 
 	page := &Page{URL: url}
-	populateChildPages(page)
+	populateChildPages(page, maxDepth, 1)
 
-	printPage(page, 0)
+	return page, nil
 }
 
-func printPage(page *Page, depth int) {
-	if page == nil {
-		return
-	}
-	fmt.Printf("%s%s\n", strings.Repeat(" ", depth), page.URL.String())
-	printPage(page.FirstChild, depth+1)
-	printPage(page.NextSibling, depth)
+// Print prints a textual representation of a page instance
+func Print(page *Page) {
+	print(page, 0)
 }
 
-func populateChildPages(page *Page) {
-	if pageCount >= MaxPages {
+func populateChildPages(page *Page, maxDepth, depth int) {
+	// Send HEAD request to avoid potentially large downloads of non-HTML resources
+	resp, err := http.Head(page.URL.String())
+	if err != nil || !isSuccessHTMLResponse(resp) {
 		return
 	}
-	pageCount++
 
-	resp, err := http.Get(page.URL.String())
-	defer resp.Body.Close()
-
-	if err != nil || !isValidHTML(resp) {
+	resp, err = http.Get(page.URL.String())
+	if err != nil || !isSuccessHTMLResponse(resp) {
+		// Only search for links in successful HTML responses
 		return
 	}
 
 	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		// ...
+	if err != nil || doc == nil {
+		// Not valid HTML response content
+		return
 	}
 
 	links := parseLinks(doc)
+	resp.Body.Close()
 
 	var prevChildPage *Page
 	for _, linkURL := range links {
-
 		if (linkURL.Scheme != "http" && linkURL.Scheme != "https" && linkURL.Scheme != "") ||
 			(linkURL.Host != page.URL.Host && linkURL.Host != "") {
 			continue
 		}
-		absolutelinkURL := page.URL.ResolveReference(&linkURL)
+		absoluteLinkURL := page.URL.ResolveReference(&linkURL)
 
 		rootPage := page
 		for rootPage.Parent != nil {
 			rootPage = rootPage.Parent
 		}
-		if urlExists(absolutelinkURL, rootPage) {
+
+		if urlExistsInTree(absoluteLinkURL, rootPage) {
 			continue
 		}
 
-		childPage := &Page{URL: absolutelinkURL, Parent: page}
+		if maxDepth != -1 && depth >= maxDepth {
+			return
+		}
+
+		childPage := &Page{URL: absoluteLinkURL, Parent: page}
 		if prevChildPage != nil {
 			prevChildPage.NextSibling = childPage
 		}
@@ -92,13 +89,35 @@ func populateChildPages(page *Page) {
 		prevChildPage = childPage
 	}
 
-	for childPage := page.FirstChild; childPage != nil; childPage = page.NextSibling {
-		populateChildPages(childPage)
+	for childPage := page.FirstChild; childPage != nil; childPage = childPage.NextSibling {
+		populateChildPages(childPage, maxDepth, depth+1)
 	}
 }
 
-func parseLinks(node *html.Node) []url.URL {
+func isSuccessHTMLResponse(resp *http.Response) bool {
+	if resp == nil {
+		return false
+	}
 
+	if !(resp.StatusCode >= 200 && resp.StatusCode < 400) {
+		return false
+	}
+
+	isContentHTML := false
+	for _, contentType := range resp.Header["Content-Type"] {
+		if strings.HasPrefix(contentType, "text/html") {
+			isContentHTML = true
+			break
+		}
+	}
+	if !isContentHTML {
+		return false
+	}
+
+	return true
+}
+
+func parseLinks(node *html.Node) []url.URL {
 	links := make(map[url.URL]bool)
 
 	var f func(n *html.Node)
@@ -109,55 +128,48 @@ func parseLinks(node *html.Node) []url.URL {
 				if attr.Key != "href" {
 					continue
 				}
+
 				url, err := url.Parse(attr.Val)
 				if err != nil {
 					continue
 				}
+
+				// Ignore "#fragment" part of URL
 				url.Fragment = ""
+
 				links[*url] = true
 			}
 		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
+
+		// Traverse the tree depth-first
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			f(child)
 		}
 	}
 	f(node)
 
-	linksarray := make([]url.URL, len(links))
+	linksArray := make([]url.URL, len(links))
 	i := 0
 	for link := range links {
-		linksarray[i] = link
+		linksArray[i] = link
 		i++
 	}
-	return linksarray
+	return linksArray
 }
 
-func urlExists(url *url.URL, page *Page) bool {
-	if page != nil {
-		if *page.URL == *url {
-			return true
-		}
-		return urlExists(url, page.FirstChild) || urlExists(url, page.NextSibling)
-	}
-	return false
+func urlExistsInTree(url *url.URL, page *Page) bool {
+	return page != nil && (*page.URL == *url ||
+		urlExistsInTree(url, page.FirstChild) ||
+		urlExistsInTree(url, page.NextSibling))
 }
 
-func isValidHTML(resp *http.Response) bool {
-	if resp.StatusCode != 200 {
-		return false
+func print(page *Page, depth int) {
+	if page == nil {
+		return
 	}
-	isContentHTML := false
-	for i := 0; i < len(resp.Header["Content-Type"]) && !isContentHTML; i++ {
-		fmt.Println(resp)
-		if strings.HasPrefix(resp.Header["Content-Type"][i], "text/html") {
-			isContentHTML = true
-		}
-	}
-	if !isContentHTML {
-		return false
-	}
-
-	return true
+	fmt.Printf("%s%s\n", strings.Repeat(" ", depth), page.URL.String())
+	print(page.FirstChild, depth+1)
+	print(page.NextSibling, depth)
 }
 
 //func
